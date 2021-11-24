@@ -25,13 +25,27 @@ income_df = pd.read_csv("data/income_df.csv")
 income_df.columns = [re.sub('Income share held by ', '', col).title() for col in income_df.columns]
 income_df_cols = income_df.columns[:-2]
 countries = income_df['Country Name'].unique()
-app = dash.Dash(__name__,external_stylesheets=[dbc.themes.MINTY])
+perc_pov_cols =\
+poverty.filter(regex='Poverty gap').columns
+poverty1 = poverty.dropna(subset=['is_country'])
+perc_pov_df = poverty1[poverty1['is_country'].dropna()].dropna(subset=perc_pov_cols)
+perc_pov_year_col = sorted(set(perc_pov_df['year']))
+cividis0 = px.colors.sequential.Cividis[0]
+
+app = dash.Dash(__name__,external_stylesheets=[dbc.themes.COSMO])
+server = app.server
 ##################################
 def make_empty_figure():
     fig = go.Figure()
     fig.layout.paper_bgcolor =  '#E5ECF6'
     fig.layout.plot_bgcolor = '#E5ECF6'
     return fig
+def multiline_indic(indicator):
+    final = []
+    splits = indicator.split()
+    for i in range(0,len(splits),3):
+        final.append(' '.join(splits[i:i+3]))
+    return '<br>'.join(final)
 
 app.layout = html.Div([
     dbc.Row([
@@ -77,6 +91,38 @@ app.layout = html.Div([
             dcc.Graph(id='output',figure=make_empty_figure())
             ])
         ]),
+    dbc.Row([
+        dbc.Col(lg=1),
+        dbc.Col([
+            html.Br(),
+            dbc.Label('select poverty level:'),
+            dcc.Slider(id = 'perc_pov_p_slider',
+               min=0,
+               max = 2,
+               step = 1,
+               value=0,
+               marks={0:{'label':'$1.9','style':{'color':cividis0,
+                                                 'fontWeight':'bold'}},
+                      1:{'label':'$3.2','style':{'color':cividis0,
+                                                 'fontWeight':'bold'}},
+                      2:{'label':'$5.5','style':{'color':cividis0,
+                                                 'fontWeight':'bold'}}},
+               included = False)],lg=2),
+        dbc.Col([
+            html.Br(),
+            dbc.Label('select year:'),
+            dcc.Slider(id = 'perc_pov_year_slider',
+                       min=perc_pov_year_col[0],
+                       max = perc_pov_year_col[-1],
+                       step = 1,
+                       value=2010,
+                       marks={year:{'label':str(year),'style':{'color':cividis0}} for year in perc_pov_year_col[::5]},
+                       included = False)],lg=5)
+    ]),
+    dcc.Graph(id='graph_slider',figure=make_empty_figure()),    
+    dbc.Label("trial"),
+    dcc.Dropdown(id = 'mapin',options=[{'label':indicator,'value':indicator} for indicator in poverty.columns[3:54]]),
+    dcc.Graph(id='mapout',figure=make_empty_figure()),
 
     dbc.Tabs([
         dbc.Tab([
@@ -169,9 +215,57 @@ def plota(country):
             title=f'Income Shares Quintiles - {country}')
     fig.layout.legend.orientation = 'h'
     fig.layout.legend.title = None
-    fig.layout.legend.x = 0.25
+    fig.layout.legend.x = 0.35
     fig.layout.xaxis.title = 'Percent of Total Income'
     fig.layout.paper_bgcolor = '#E5ECF6'
+    return fig
+@app.callback(Output(component_id='graph_slider',component_property='figure'),
+              Input(component_id='perc_pov_year_slider',component_property='value'),
+              Input(component_id='perc_pov_p_slider',component_property='value'))
+def plot_perv_pov(year,indicator):
+    indicator = perc_pov_cols[indicator]
+    df = (perc_pov_df[perc_pov_df['year'].eq(year)]
+          .dropna(subset=[indicator])
+          .sort_values(indicator))
+    if df.empty:
+        raise PreventUpdate
+    fig = px.scatter(df,x = indicator,
+                     y = 'Country Name',
+                     color = 'Population, total',
+                     size =[30]*len(df),
+                     size_max=15,
+                     hover_name='Country Name',
+                     height=250+(20*len(df)),
+                     color_continuous_scale='cividis',
+                     title= indicator + '<b>: '+ f'{year}'+'</b>')
+    fig.layout.paper_bgcolor = '#E5ECF6'
+    fig.layout.xaxis.ticksuffix = '%'
+    return fig
+@app.callback(Output(component_id='mapout',component_property='figure'),
+             Input(component_id='mapin',component_property='value'))
+def mapping(indicator):
+    if indicator == None:
+        raise PreventUpdate
+    df = poverty[poverty['is_country']==True]
+    fig = px.choropleth(data_frame=df,
+              locations="Country Code",
+              hover_name='Country Name',
+              title = indicator,
+              color=indicator,
+              color_continuous_scale='cividis',
+              animation_frame='year',
+              height=700)
+    fig.layout.geo.showframe = False
+    fig.layout.geo.showcountries = True
+    fig.layout.geo.projection.type = 'natural earth'
+    fig.layout.geo.lataxis.range = [-53,76]
+    fig.layout.geo.lonaxis.range = [-137,168]
+    fig.layout.geo.landcolor = 'white'
+    fig.layout.geo.bgcolor = '#E5ECF6'
+    fig.layout.paper_bgcolor = '#E5ECF6'
+    fig.layout.geo.countrycolor = 'gray'
+    fig.layout.geo.coastlinecolor = 'gray'
+    fig.layout.coloraxis.colorbar.title = multiline_indic(indicator)
     return fig
 if __name__ == '__main__':
     app.run_server(debug=True,port=8060)
